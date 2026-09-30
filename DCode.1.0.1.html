@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>D code - محرر نصوص متعدد الملفات والمعاينة المباشرة</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+    <!-- JSZip Library لتحميل المشروع مضغوطاً -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- TypeScript Compiler -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/typescript/5.0.4/typescript.min.js"></script>
+    <!-- CoffeeScript Compiler -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/coffeescript/2.7.0/coffeescript.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        cairo: ['Cairo', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        matrix: {
+                            green: '#00ff66',
+                            darkgreen: '#003b15',
+                            glow: 'rgba(0, 255, 102, 0.4)',
+                            bg: '#050a06'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        * { box-sizing: border-box; user-select: none; }
+        body {
+            font-family: 'Cairo', sans-serif;
+            background-color: #030704;
+            color: #e2e8f0;
+            overflow: hidden;
+            height: 100vh;
+            margin: 0;
+        }
+
+        #matrixCanvas {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            z-index: 0; pointer-events: none;
+        }
+
+        .glass-card {
+            background: rgba(8, 18, 12, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(0, 255, 102, 0.25);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 15px rgba(0, 255, 102, 0.1);
+        }
+
+        .editor-textarea {
+            user-select: text !important;
+            font-family: 'JetBrains Mono', monospace;
+            caret-color: #00ff66;
+            line-height: 1.6;
+            tab-size: 4;
+        }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0, 20, 10, 0.5); }
+        ::-webkit-scrollbar-thumb { background: rgba(0, 255, 102, 0.3); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(0, 255, 102, 0.7); }
+
+        .matrix-btn {
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .matrix-btn:hover {
+            box-shadow: 0 0 15px rgba(0, 255, 102, 0.5);
+            border-color: #00ff66;
+        }
+
+        .file-item { transition: all 0.2s; }
+        .file-item.active {
+            background: rgba(0, 255, 102, 0.15);
+            border-right: 3px solid #00ff66;
+            color: #00ff66;
+        }
+
+        #previewFrame {
+            background-color: white;
+            border-radius: 0 0 0.75rem 0.75rem;
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+    </style>
+</head>
+<body class="relative flex p-2 md:p-4 gap-4 h-screen">
+
+    <canvas id="matrixCanvas"></canvas>
+
+    <!-- الواجهة الرئيسية -->
+    <div class="relative z-10 w-full h-full flex flex-col md:flex-row gap-4">
+        
+        <!-- الشريط الجانبي -->
+        <aside class="glass-card rounded-xl flex flex-col w-full md:w-64 flex-shrink-0 h-52 md:h-full border border-matrix-green/30">
+            <div class="p-4 border-b border-matrix-green/20 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-matrix-green/20 border border-matrix-green flex items-center justify-center text-matrix-green font-black text-lg">
+                        D
+                    </div>
+                    <h1 class="font-black text-white tracking-wide text-lg">
+                        D <span class="text-matrix-green">code</span>
+                    </h1>
+                </div>
+            </div>
+
+            <!-- قائمة الملفات -->
+            <div class="flex-1 overflow-y-auto py-2" id="fileList"></div>
+
+            <!-- أزرار الإضافة والتنزيل -->
+            <div class="p-3 border-t border-matrix-green/20 flex flex-col gap-2">
+                <button onclick="openNewFileModal()" class="matrix-btn bg-slate-900 hover:bg-slate-800 text-matrix-green border border-matrix-green/40 px-3 py-2 rounded-lg flex items-center justify-center gap-2 text-sm font-bold">
+                    <i class="fa-solid fa-plus"></i> ملف جديد
+                </button>
+                <button onclick="downloadProject()" class="matrix-btn bg-matrix-green text-black px-3 py-2 rounded-lg flex items-center justify-center gap-2 text-sm font-bold shadow-[0_0_10px_rgba(0,255,102,0.4)]">
+                    <i class="fa-solid fa-file-zipper"></i> تنزيل كملف واحد (ZIP)
+                </button>
+            </div>
+        </aside>
+
+        <!-- منطقة المحرر والمعاينة -->
+        <main class="flex-1 flex flex-col lg:flex-row gap-4 h-full min-h-0">
+            
+            <!-- محرر النصوص -->
+            <div class="glass-card rounded-xl flex-1 flex flex-col border border-matrix-green/30 min-h-0">
+                <div class="bg-black/60 px-4 py-2 border-b border-matrix-green/20 flex justify-between items-center">
+                    <div class="flex items-center gap-2 text-sm font-mono text-slate-300" id="currentFileHeader"></div>
+                    <div class="flex items-center gap-3">
+                        <button onclick="renameCurrentFile()" class="text-slate-400 hover:text-matrix-green transition" title="إعادة تسمية الملف">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
+                        <button onclick="deleteCurrentFile()" class="text-rose-400 hover:text-rose-300 transition" title="حذف الملف الحالي">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="flex-1 relative bg-black/40">
+                    <textarea 
+                        id="codeEditor" 
+                        dir="ltr" 
+                        spellcheck="false"
+                        oninput="handleInput()"
+                        onkeydown="handleKeyDown(event)"
+                        class="editor-textarea absolute inset-0 w-full h-full p-4 bg-transparent text-slate-100 placeholder-slate-600 focus:outline-none resize-none text-sm border-none"
+                    ></textarea>
+                </div>
+            </div>
+
+            <!-- نافذة المعاينة المباشرة -->
+            <div id="previewContainer" class="glass-card rounded-xl flex-1 flex flex-col border border-matrix-green/30 min-h-0 relative">
+                <div class="bg-black/60 px-4 py-2 border-b border-matrix-green/20 flex justify-between items-center">
+                    <div class="flex items-center gap-2 text-sm font-bold text-slate-300">
+                        <i class="fa-solid fa-eye text-matrix-green"></i>
+                        <span>المعاينة المباشرة</span>
+                    </div>
+                    <button onclick="toggleFullScreen()" class="matrix-btn bg-slate-800 border border-slate-600 text-white px-2 py-1 rounded hover:text-matrix-green text-xs flex items-center gap-1">
+                        <i class="fa-solid fa-expand"></i> ملء الشاشة
+                    </button>
+                </div>
+                <div class="flex-1 w-full h-full relative">
+                    <iframe id="previewFrame" sandbox="allow-scripts allow-modals allow-same-origin"></iframe>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- نافذة إضافة ملف جديد باختيار الامتداد -->
+    <div id="newFileModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="glass-card p-6 rounded-xl border border-matrix-green w-full max-w-md flex flex-col gap-4">
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                <i class="fa-solid fa-file-circle-plus text-matrix-green"></i> إضافة ملف جديد
+            </h3>
+            
+            <div>
+                <label class="text-xs text-slate-400 mb-1 block">اسم الملف (اختياري، أو سيتم تسميته تلقائياً):</label>
+                <input type="text" id="modalFileName" dir="ltr" placeholder="مثال: app أو index" class="w-full bg-black/60 border border-matrix-green/40 text-white p-2.5 rounded-lg focus:outline-none focus:border-matrix-green font-mono text-sm">
+            </div>
+
+            <div>
+                <label class="text-xs text-slate-400 mb-2 block">اختر نوع/تنسيق الملف لتأكيده فوراً:</label>
+                <div class="grid grid-cols-3 gap-2">
+                    <button onclick="confirmCreateFile('html')" class="matrix-btn bg-slate-900 border border-orange-500/50 hover:border-orange-500 text-orange-400 p-2.5 rounded-lg flex flex-col items-center gap-1 text-xs font-bold">
+                        <i class="fa-brands fa-html5 text-xl"></i> .HTML
+                    </button>
+                    <button onclick="confirmCreateFile('css')" class="matrix-btn bg-slate-900 border border-sky-500/50 hover:border-sky-500 text-sky-400 p-2.5 rounded-lg flex flex-col items-center gap-1 text-xs font-bold">
+                        <i class="fa-brands fa-css3-alt text-xl"></i> .CSS
+                    </button>
+                    <button onclick="confirmCreateFile('js')" class="matrix-btn bg-slate-900 border border-yellow-500/50 hover:border-yellow-500 text-yellow-400 p-2.5 rounded-lg flex flex-col items-center gap-1 text-xs font-bold">
+                        <i class="fa-brands fa-js text-xl"></i> .JS
+                    </button>
+                    <button onclick="confirmCreateFile('ts')" class="matrix-btn bg-slate-900 border border-blue-500/50 hover:border-blue-500 text-blue-400 p-2.5 rounded-lg flex flex-col items-center gap-1 text-xs font-bold">
+                        <i class="fa-solid fa-code text-xl"></i> .TS
+                    </button>
+                    <button onclick="confirmCreateFile('coffee')" class="matrix-btn bg-slate-900 border border-amber-600/50 hover:border-amber-600 text-amber-500 p-2.5 rounded-lg flex flex-col items-center gap-1 text-xs font-bold">
+                        <i class="fa-solid fa-mug-hot text-xl"></i> .Coffee
+                    </button>
+                    <button onclick="confirmCreateFile('json')" class="matrix-btn bg-slate-900 border border-emerald-500/50 hover:border-emerald-500 text-emerald-400 p-2.5 rounded-lg flex flex-col items-center gap-1 text-xs font-bold">
+                        <i class="fa-solid fa-file-code text-xl"></i> .JSON
+                    </button>
+                </div>
+            </div>
+
+            <button onclick="closeNewFileModal()" class="mt-2 text-slate-400 hover:text-white text-xs underline text-center">إلغاء</button>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. Matrix Background Canvas ---
+        const canvas = document.getElementById('matrixCanvas');
+        const ctx = canvas.getContext('2d');
+        function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+        resizeCanvas();
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*+=';
+        const fontSize = 16;
+        let columns = Math.floor(canvas.width / fontSize);
+        let drops = [];
+        function initDrops() {
+            columns = Math.floor(canvas.width / fontSize);
+            drops = [];
+            for (let i = 0; i < columns; i++) drops[i] = Math.random() * -100;
+        }
+        initDrops();
+        window.addEventListener('resize', () => { resizeCanvas(); initDrops(); });
+        function drawMatrix() {
+            ctx.fillStyle = 'rgba(3, 7, 4, 0.08)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.font = `${fontSize}px JetBrains Mono, monospace`;
+            for (let i = 0; i < drops.length; i++) {
+                const text = alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+                ctx.fillStyle = Math.random() > 0.88 ? '#ffffff' : '#00ff66';
+                const x = i * fontSize;
+                const y = drops[i] * fontSize;
+                ctx.fillText(text, x, y);
+                if (y > canvas.height && Math.random() > 0.975) drops[i] = 0;
+                drops[i]++;
+            }
+        }
+        setInterval(drawMatrix, 33);
+
+        // --- 2. إدارة البيانات والملفات ---
+        let files = [
+            { 
+                id: 1, 
+                name: 'index.html', 
+                content: `<!DOCTYPE html>\n<html lang="ar" dir="rtl">\n<head>\n  <meta charset="UTF-8">\n  <link rel="stylesheet" href="style.css">\n</head>\n<body>\n  <div class="card">\n    <h1>مرحباً بك في D code!</h1>\n    <p id="output">جاري فتح وتشغيل كافة الأكواد والمعاينة بنجاح...</p>\n  </div>\n\n  <script src="script.js"><\/script>\n</body>\n</html>` 
+            },
+            {
+                id: 2,
+                name: 'style.css',
+                content: `body {\n  font-family: system-ui, sans-serif;\n  background: #0f172a;\n  color: #fff;\n  display: flex;\n  justify-content: center;\n  align-items: center;\n  height: 100vh;\n  margin: 0;\n}\n.card {\n  background: rgba(255, 255, 255, 0.05);\n  padding: 30px;\n  border-radius: 16px;\n  border: 1px solid #00ff66;\n  box-shadow: 0 0 20px rgba(0,255,102,0.2);\n  text-align: center;\n}`
+            },
+            {
+                id: 3,
+                name: 'script.js',
+                content: `console.log("D code Engine Ready!");`
+            }
+        ];
+
+        let activeFileId = 1;
+        const editor = document.getElementById('codeEditor');
+        const previewFrame = document.getElementById('previewFrame');
+        const fileListEl = document.getElementById('fileList');
+        const currentFileHeaderEl = document.getElementById('currentFileHeader');
+
+        function getFileIconInfo(fileName) {
+            const ext = fileName.split('.').pop().toLowerCase();
+            switch (ext) {
+                case 'html': case 'htm': return { icon: 'fa-brands fa-html5', color: 'text-orange-500' };
+                case 'css': return { icon: 'fa-brands fa-css3-alt', color: 'text-sky-400' };
+                case 'js': return { icon: 'fa-brands fa-js', color: 'text-yellow-400' };
+                case 'ts': return { icon: 'fa-solid fa-code', color: 'text-blue-400' };
+                case 'coffee': return { icon: 'fa-solid fa-mug-hot', color: 'text-amber-500' };
+                case 'json': return { icon: 'fa-solid fa-file-code', color: 'text-emerald-400' };
+                default: return { icon: 'fa-solid fa-file', color: 'text-slate-400' };
+            }
+        }
+
+        function renderFileList() {
+            fileListEl.innerHTML = '';
+            files.forEach(file => {
+                const isActive = file.id === activeFileId;
+                const iconInfo = getFileIconInfo(file.name);
+                const div = document.createElement('div');
+                div.className = `file-item cursor-pointer px-4 py-2.5 text-sm font-mono flex items-center justify-between border-b border-matrix-green/10 text-slate-300 hover:bg-white/5 ${isActive ? 'active' : ''}`;
+                div.onclick = () => switchFile(file.id);
+                div.innerHTML = `
+                    <div class="flex items-center gap-2 overflow-hidden">
+                        <i class="${iconInfo.icon} ${iconInfo.color}"></i>
+                        <span class="truncate">${file.name}</span>
+                    </div>
+                `;
+                fileListEl.appendChild(div);
+            });
+        }
+
+        function switchFile(id) {
+            activeFileId = id;
+            const file = files.find(f => f.id === id);
+            if(!file) return;
+            editor.value = file.content;
+            
+            const iconInfo = getFileIconInfo(file.name);
+            currentFileHeaderEl.innerHTML = `
+                <i class="${iconInfo.icon} ${iconInfo.color}"></i>
+                <span>${file.name}</span>
+            `;
+
+            renderFileList();
+            updatePreview();
+        }
+
+        function handleInput() {
+            const file = files.find(f => f.id === activeFileId);
+            if(file) {
+                file.content = editor.value;
+                updatePreview();
+            }
+        }
+
+        // --- 3. نافذة إضافة ملف واختصارات الامتدادات ---
+        function openNewFileModal() {
+            document.getElementById('modalFileName').value = '';
+            document.getElementById('newFileModal').classList.remove('hidden');
+        }
+
+        function closeNewFileModal() {
+            document.getElementById('newFileModal').classList.add('hidden');
+        }
+
+        function confirmCreateFile(extension) {
+            let nameInput = document.getElementById('modalFileName').value.trim();
+            
+            if (!nameInput) {
+                nameInput = `file_${files.length + 1}`;
+            }
+
+            // إزالة الامتداد القديم إن وجد لتطبيقه نظيفاً
+            if (nameInput.includes('.')) {
+                nameInput = nameInput.substring(0, nameInput.lastIndexOf('.'));
+            }
+
+            const fullName = `${nameInput}.${extension}`;
+
+            if(files.some(f => f.name.toLowerCase() === fullName.toLowerCase())) {
+                alert("يوجد ملف بنفس هذا الاسم والامتداد بالفعل!");
+                return;
+            }
+
+            let defaultContent = '';
+            if(extension === 'html') defaultContent = `<!DOCTYPE html>\n<html lang="ar" dir="rtl">\n<head>\n  <meta charset="UTF-8">\n  <title>Document</title>\n</head>\n<body>\n\n</body>\n</html>`;
+            else if(extension === 'css') defaultContent = `/* CSS Stylesheet */\nbody {\n  margin: 0;\n}`;
+            else if(extension === 'js') defaultContent = `// JavaScript Code\nconsole.log("Script loaded");`;
+            else if(extension === 'ts') defaultContent = `// TypeScript Code\nconst greeting: string = "Hello TS";`;
+            else if(extension === 'coffee') defaultContent = `# CoffeeScript Code\nsquare = (x) -> x * x`;
+            else if(extension === 'json') defaultContent = `{\n  "status": "success"\n}`;
+
+            const newFile = {
+                id: Date.now(),
+                name: fullName,
+                content: defaultContent
+            };
+            files.push(newFile);
+            closeNewFileModal();
+            switchFile(newFile.id);
+        }
+
+        // --- 4. تعديل اسم الملف الحسابي الافتراضي والحالي ---
+        function renameCurrentFile() {
+            const file = files.find(f => f.id === activeFileId);
+            if (!file) return;
+
+            const newName = prompt("أدخل الاسم الجديد للملف مع الامتداد:", file.name);
+            if (!newName || newName.trim() === '' || newName === file.name) return;
+
+            if (files.some(f => f.id !== activeFileId && f.name.toLowerCase() === newName.trim().toLowerCase())) {
+                alert("يوجد ملف آخر بنفس هذا الاسم!");
+                return;
+            }
+
+            file.name = newName.trim();
+            switchFile(file.id);
+        }
+
+        function deleteCurrentFile() {
+            if(files.length <= 1) {
+                alert("لا يمكن حذف الملف الأخير في المشروع!");
+                return;
+            }
+            if(confirm("هل أنت متأكد من حذف هذا الملف؟")) {
+                files = files.filter(f => f.id !== activeFileId);
+                switchFile(files[0].id);
+            }
+        }
+
+        // --- 5. محرك المعاينة المحدث والمصلح (Fix Preview Issue) ---
+        function updatePreview() {
+            let htmlFile = files.find(f => f.id === activeFileId && f.name.endsWith('.html'));
+            
+            // إذا لم يكن الملف الحالي HTML، ابحث عن أول ملف HTML متوفر
+            if (!htmlFile) {
+                htmlFile = files.find(f => f.name.endsWith('.html') || f.name.endsWith('.htm'));
+            }
+
+            if (!htmlFile) {
+                // إذا لم يوجد أي ملف HTML
+                const activeFile = files.find(f => f.id === activeFileId);
+                let textDisplay = activeFile ? activeFile.content : '';
+                previewFrame.srcdoc = `<!DOCTYPE html><html><body style="background:#0f172a; color:#00ff66; font-family:monospace; padding:20px; word-break:break-all;"><pre>${escapeHtml(textDisplay)}</pre></body></html>`;
+                return;
+            }
+
+            let renderedHtml = htmlFile.content;
+
+            // 1. ربط واستبدال ملفات CSS <link rel="stylesheet" href="...">
+            renderedHtml = renderedHtml.replace(/<link\s+[^>]*href=["']([^"']+)["'][^>]*>/gi, (match, src) => {
+                const targetFile = files.find(f => f.name === src || f.name === src.replace('./', ''));
+                if (targetFile) {
+                    return `<style>${targetFile.content}</style>`;
+                }
+                return match;
+            });
+
+            // 2. ربط وتجميع واستبدال ملفات JS, TS, CoffeeScript <script src="...">
+            renderedHtml = renderedHtml.replace(/<script\s+[^>]*src=["']([^"']+)["'][^>]*>\s*<\/script>/gi, (match, src) => {
+                const targetFile = files.find(f => f.name === src || f.name === src.replace('./', ''));
+                if (targetFile) {
+                    const ext = targetFile.name.split('.').pop().toLowerCase();
+                    let code = targetFile.content;
+
+                    if (ext === 'ts' && window.ts) {
+                        try {
+                            code = window.ts.transpile(code, { target: window.ts.ScriptTarget.ES2015 });
+                        } catch (e) { code = `console.error(${JSON.stringify(e.message)});`; }
+                    } else if (ext === 'coffee' && window.CoffeeScript) {
+                        try {
+                            code = window.CoffeeScript.compile(code, { bare: true });
+                        } catch (e) { code = `console.error(${JSON.stringify(e.message)});`; }
+                    }
+
+                    return `<script>${code}<\/script>`;
+                }
+                return match;
+            });
+
+            // 3. محاكي الـ Fetch للاستجابة لملفات الـ JSON والأصول المحلية
+            const fileMap = {};
+            files.forEach(f => fileMap[f.name] = f.content);
+
+            const virtualFsScript = `
+                <script>
+                    (function() {
+                        const vFiles = ${JSON.stringify(fileMap)};
+                        const origFetch = window.fetch;
+                        window.fetch = function(url, opts) {
+                            const clean = url.replace(/^\\.\\//, '');
+                            if (vFiles.hasOwnProperty(clean)) {
+                                return Promise.resolve(new Response(vFiles[clean], {
+                                    status: 200,
+                                    headers: { 'Content-Type': clean.endsWith('.json') ? 'application/json' : 'text/plain' }
+                                }));
+                            }
+                            return origFetch.apply(this, arguments);
+                        };
+                    })();
+                <\/script>
+            `;
+
+            // إدراج محاكي الموارد في رأس الصفحة
+            if (renderedHtml.includes('<head>')) {
+                renderedHtml = renderedHtml.replace('<head>', '<head>' + virtualFsScript);
+            } else {
+                renderedHtml = virtualFsScript + renderedHtml;
+            }
+
+            // عرض المعاينة الحية بدقة عالية من خلال srcdoc لإنهاء مشكلة طباعة الأكواد
+            previewFrame.srcdoc = renderedHtml;
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function handleKeyDown(e) {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = editor.selectionStart;
+                const end = editor.selectionEnd;
+                editor.value = editor.value.substring(0, start) + "    " + editor.value.substring(end);
+                editor.selectionStart = editor.selectionEnd = start + 4;
+                handleInput();
+            }
+        }
+
+        function toggleFullScreen() {
+            const container = document.getElementById('previewContainer');
+            if (!document.fullscreenElement) {
+                if (container.requestFullscreen) container.requestFullscreen();
+                else if (container.webkitRequestFullscreen) container.webkitRequestFullscreen();
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+            }
+        }
+
+        function downloadProject() {
+            if(typeof JSZip === 'undefined') {
+                alert("جاري تحميل مكتبة الضغط، يرجى المحاولة بعد ثوانٍ.");
+                return;
+            }
+            const zip = new JSZip();
+            files.forEach(file => { zip.file(file.name, file.content); });
+
+            zip.generateAsync({type:"blob"}).then(function(content) {
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(content);
+                link.download = "D_code_Project.zip";
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            });
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            switchFile(files[0].id);
+        });
+    </script>
+</body>
+</html>
