@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matrix Code - محرر نصوص متعدد الملفات</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+    <!-- JSZip Library لتحميل الملفات كملف واحد مضغوط -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        cairo: ['Cairo', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        matrix: {
+                            green: '#00ff66',
+                            darkgreen: '#003b15',
+                            glow: 'rgba(0, 255, 102, 0.4)',
+                            bg: '#050a06'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        * { box-sizing: border-box; user-select: none; }
+        body {
+            font-family: 'Cairo', sans-serif;
+            background-color: #030704;
+            color: #e2e8f0;
+            overflow: hidden;
+            height: 100vh;
+            margin: 0;
+        }
+
+        /* Matrix Background Canvas */
+        #matrixCanvas {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            z-index: 0; pointer-events: none;
+        }
+
+        /* Glassmorphism styling */
+        .glass-card {
+            background: rgba(8, 18, 12, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(0, 255, 102, 0.25);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 15px rgba(0, 255, 102, 0.1);
+        }
+
+        .editor-textarea {
+            user-select: text !important;
+            font-family: 'JetBrains Mono', monospace;
+            caret-color: #00ff66;
+            line-height: 1.6;
+            tab-size: 4;
+        }
+
+        /* Custom Glow Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0, 20, 10, 0.5); }
+        ::-webkit-scrollbar-thumb { background: rgba(0, 255, 102, 0.3); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(0, 255, 102, 0.7); }
+
+        .matrix-btn {
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .matrix-btn:hover {
+            box-shadow: 0 0 15px rgba(0, 255, 102, 0.5);
+            border-color: #00ff66;
+        }
+
+        .file-item { transition: all 0.2s; }
+        .file-item.active {
+            background: rgba(0, 255, 102, 0.15);
+            border-right: 3px solid #00ff66;
+            color: #00ff66;
+        }
+
+        /* إخفاء سكرول المحرر */
+        .editor-textarea::-webkit-scrollbar { width: 8px; }
+
+        /* تنسيق الـ Iframe للمعاينة */
+        #previewFrame {
+            background-color: white;
+            border-radius: 0 0 0.75rem 0.75rem;
+        }
+    </style>
+</head>
+<body class="relative flex p-2 md:p-4 gap-4 h-screen">
+
+    <canvas id="matrixCanvas"></canvas>
+
+    <!-- واجهة التطبيق -->
+    <div class="relative z-10 w-full h-full flex flex-col md:flex-row gap-4">
+        
+        <!-- الشريط الجانبي (مستكشف الملفات) -->
+        <aside class="glass-card rounded-xl flex flex-col w-full md:w-64 flex-shrink-0 h-48 md:h-full border border-matrix-green/30">
+            <!-- الهيدر -->
+            <div class="p-4 border-b border-matrix-green/20 flex items-center gap-3">
+                <i class="fa-solid fa-code text-matrix-green text-xl"></i>
+                <h1 class="font-black text-white tracking-wide text-lg">
+                    Matrix<span class="text-matrix-green">Code</span>
+                </h1>
+            </div>
+
+            <!-- قائمة الملفات -->
+            <div class="flex-1 overflow-y-auto py-2" id="fileList">
+                <!-- يتم حقن الملفات هنا عبر الجافاسكربت -->
+            </div>
+
+            <!-- أزرار الإجراءات السريعة -->
+            <div class="p-3 border-t border-matrix-green/20 flex flex-col gap-2">
+                <button onclick="createNewFile()" class="matrix-btn bg-slate-900 hover:bg-slate-800 text-matrix-green border border-matrix-green/40 px-3 py-2 rounded-lg flex items-center justify-center gap-2 text-sm font-bold">
+                    <i class="fa-solid fa-plus"></i> ملف جديد
+                </button>
+                <button onclick="downloadProject()" class="matrix-btn bg-matrix-green text-black px-3 py-2 rounded-lg flex items-center justify-center gap-2 text-sm font-bold shadow-[0_0_10px_rgba(0,255,102,0.4)]">
+                    <i class="fa-solid fa-file-zipper"></i> تنزيل كملف واحد
+                </button>
+            </div>
+        </aside>
+
+        <!-- منطقة العمل الرئيسية (المحرر والمعاينة) -->
+        <main class="flex-1 flex flex-col lg:flex-row gap-4 h-full min-h-0">
+            
+            <!-- نافذة المحرر -->
+            <div class="glass-card rounded-xl flex-1 flex flex-col border border-matrix-green/30 min-h-0">
+                <div class="bg-black/60 px-4 py-2 border-b border-matrix-green/20 flex justify-between items-center">
+                    <div class="flex items-center gap-2 text-sm font-mono text-slate-300">
+                        <i class="fa-brands fa-html5 text-orange-500"></i>
+                        <span id="currentFileName">index.html</span>
+                    </div>
+                    <button onclick="deleteCurrentFile()" class="text-rose-400 hover:text-rose-300 transition" title="حذف الملف">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+                </div>
+                <div class="flex-1 relative bg-black/40">
+                    <textarea 
+                        id="codeEditor" 
+                        dir="ltr" 
+                        spellcheck="false"
+                        oninput="handleInput()"
+                        onkeydown="handleKeyDown(event)"
+                        class="editor-textarea absolute inset-0 w-full h-full p-4 bg-transparent text-slate-100 placeholder-slate-600 focus:outline-none resize-none text-sm border-none"
+                    ></textarea>
+                </div>
+            </div>
+
+            <!-- نافذة المعاينة المباشرة -->
+            <div id="previewContainer" class="glass-card rounded-xl flex-1 flex flex-col border border-matrix-green/30 min-h-0 relative">
+                <div class="bg-black/60 px-4 py-2 border-b border-matrix-green/20 flex justify-between items-center">
+                    <div class="flex items-center gap-2 text-sm font-bold text-slate-300">
+                        <i class="fa-solid fa-eye text-matrix-green"></i>
+                        <span>المعاينة المباشرة</span>
+                    </div>
+                    <button onclick="toggleFullScreen()" class="matrix-btn bg-slate-800 border border-slate-600 text-white px-2 py-1 rounded hover:text-matrix-green text-xs flex items-center gap-1">
+                        <i class="fa-solid fa-expand"></i> ملء الشاشة
+                    </button>
+                </div>
+                <!-- Iframe لعرض الكود -->
+                <iframe id="previewFrame" class="w-full flex-1 border-none bg-white"></iframe>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        // --- 1. تأثير Matrix الخلفي ---
+        const canvas = document.getElementById('matrixCanvas');
+        const ctx = canvas.getContext('2d');
+        function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+        resizeCanvas();
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*+=';
+        const fontSize = 16;
+        let columns = Math.floor(canvas.width / fontSize);
+        let drops = [];
+        function initDrops() {
+            columns = Math.floor(canvas.width / fontSize);
+            drops = [];
+            for (let i = 0; i < columns; i++) drops[i] = Math.random() * -100;
+        }
+        initDrops();
+        window.addEventListener('resize', () => { resizeCanvas(); initDrops(); });
+        function drawMatrix() {
+            ctx.fillStyle = 'rgba(3, 7, 4, 0.08)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.font = `${fontSize}px JetBrains Mono, monospace`;
+            for (let i = 0; i < drops.length; i++) {
+                const text = alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+                ctx.fillStyle = Math.random() > 0.88 ? '#ffffff' : '#00ff66';
+                const x = i * fontSize;
+                const y = drops[i] * fontSize;
+                ctx.fillText(text, x, y);
+                if (y > canvas.height && Math.random() > 0.975) drops[i] = 0;
+                drops[i]++;
+            }
+        }
+        setInterval(drawMatrix, 33);
+
+        // --- 2. منطق التطبيق وإدارة الملفات ---
+        let files = [
+            { 
+                id: 1, 
+                name: 'index.html', 
+                content: `<!DOCTYPE html>\n<html lang="ar" dir="rtl">\n<head>\n  <meta charset="UTF-8">\n  <style>\n    body { font-family: Tahoma; text-align: center; margin-top: 50px; }\n    h1 { color: #00ff66; background: #222; padding: 20px; border-radius: 10px; }\n  </style>\n</head>\n<body>\n  <h1>مرحباً بك في MatrixCode!</h1>\n  <p>جرب تعديل هذا الكود أو إضافة ملفات جديدة من القائمة الجانبية.</p>\n</body>\n</html>` 
+            }
+        ];
+        let activeFileId = 1;
+        let fileCounter = 1;
+
+        const editor = document.getElementById('codeEditor');
+        const previewFrame = document.getElementById('previewFrame');
+        const fileListEl = document.getElementById('fileList');
+        const currentFileNameEl = document.getElementById('currentFileName');
+
+        function renderFileList() {
+            fileListEl.innerHTML = '';
+            files.forEach(file => {
+                const isActive = file.id === activeFileId;
+                const div = document.createElement('div');
+                div.className = `file-item cursor-pointer px-4 py-2.5 text-sm font-mono flex items-center gap-2 border-b border-matrix-green/10 text-slate-300 hover:bg-white/5 ${isActive ? 'active' : ''}`;
+                div.onclick = () => switchFile(file.id);
+                div.innerHTML = `<i class="fa-brands fa-html5 ${isActive ? 'text-orange-500' : 'text-slate-500'}"></i> <span>${file.name}</span>`;
+                fileListEl.appendChild(div);
+            });
+        }
+
+        function switchFile(id) {
+            activeFileId = id;
+            const file = files.find(f => f.id === id);
+            editor.value = file.content;
+            currentFileNameEl.innerText = file.name;
+            renderFileList();
+            updatePreview();
+        }
+
+        function handleInput() {
+            const file = files.find(f => f.id === activeFileId);
+            if(file) {
+                file.content = editor.value;
+                updatePreview();
+            }
+        }
+
+        function createNewFile() {
+            fileCounter++;
+            const newName = prompt("أدخل اسم الملف الجديد (مثل: page2.html):", `page${fileCounter}.html`);
+            if(!newName) return;
+            
+            const newFile = {
+                id: Date.now(),
+                name: newName.endsWith('.html') ? newName : newName + '.html',
+                content: `<!DOCTYPE html>\n<html>\n<head>\n  <title>${newName}</title>\n</head>\n<body>\n  <h1>${newName}</h1>\n</body>\n</html>`
+            };
+            files.push(newFile);
+            switchFile(newFile.id);
+        }
+
+        function deleteCurrentFile() {
+            if(files.length <= 1) {
+                alert("لا يمكن حذف الملف الأخير!");
+                return;
+            }
+            if(confirm("هل أنت متأكد من حذف هذا الملف؟")) {
+                files = files.filter(f => f.id !== activeFileId);
+                switchFile(files[0].id);
+            }
+        }
+
+        function updatePreview() {
+            const file = files.find(f => f.id === activeFileId);
+            if(file) {
+                // كتابة محتوى الـ HTML داخل نافذة المعاينة
+                const doc = previewFrame.contentDocument || previewFrame.contentWindow.document;
+                doc.open();
+                doc.write(file.content);
+                doc.close();
+            }
+        }
+
+        // إدراج 4 مسافات عند الضغط على Tab بدلاً من الخروج من المحرر
+        function handleKeyDown(e) {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = editor.selectionStart;
+                const end = editor.selectionEnd;
+                editor.value = editor.value.substring(0, start) + "    " + editor.value.substring(end);
+                editor.selectionStart = editor.selectionEnd = start + 4;
+                handleInput();
+            }
+        }
+
+        // --- 3. وظيفة ملء الشاشة للمعاينة ---
+        function toggleFullScreen() {
+            const container = document.getElementById('previewContainer');
+            if (!document.fullscreenElement) {
+                if (container.requestFullscreen) {
+                    container.requestFullscreen();
+                } else if (container.webkitRequestFullscreen) { /* Safari */
+                    container.webkitRequestFullscreen();
+                } else if (container.msRequestFullscreen) { /* IE11 */
+                    container.msRequestFullscreen();
+                }
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            }
+        }
+
+        // --- 4. تحميل جميع الملفات في ملف ZIP واحد ---
+        function downloadProject() {
+            if(typeof JSZip === 'undefined') {
+                alert("جاري تحميل مكتبة الضغط، يرجى المحاولة بعد قليل.");
+                return;
+            }
+            const zip = new JSZip();
+            
+            // إضافة كل الملفات إلى كائن zip
+            files.forEach(file => {
+                zip.file(file.name, file.content);
+            });
+
+            // إنشاء ملف الـ ZIP وتنزيله
+            zip.generateAsync({type:"blob"}).then(function(content) {
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(content);
+                link.download = "MatrixCode_Project.zip";
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            });
+        }
+
+        // التهيئة المبدئية عند التحميل
+        window.addEventListener('DOMContentLoaded', () => {
+            renderFileList();
+            switchFile(files[0].id);
+        });
+    </script>
+</body>
+</html>
